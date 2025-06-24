@@ -1,64 +1,57 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const Login = () => {
-  const [credentials, setCredentials] = useState({
-    username: '',
-    password: ''
-  });
-
+function Login() {
+  const [formData, setFormData] = useState({ username: '', password: '' });
   const [message, setMessage] = useState('');
 
   const handleChange = (e) => {
-    setCredentials({
-      ...credentials,
-      [e.target.name]: e.target.value
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleLogin = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
     try {
-      const res = await axios.post('http://127.0.0.1:8000/api/token/', credentials);
+      const response = await axios.post('http://127.0.0.1:8000/api/token/', formData);
+      const { access, refresh } = response.data;
 
       // Save tokens to localStorage
-      localStorage.setItem('access_token', res.data.access);
-      localStorage.setItem('refresh_token', res.data.refresh);
+      localStorage.setItem('access', access);
+      localStorage.setItem('refresh', refresh);
 
-      setMessage('✅ Logged in successfully!');
+      setMessage('✅ Login successful!');
+      // Redirect user or update app state here if needed
     } catch (error) {
+      setMessage('❌ Login failed. Please check your credentials.');
       console.error(error);
-      setMessage('❌ Login failed. Check your credentials.');
     }
   };
 
   return (
-    <div>
+    <div style={{ maxWidth: 400, margin: 'auto' }}>
       <h2>Login</h2>
-      <form onSubmit={handleLogin}>
+      <form onSubmit={handleSubmit}>
         <input
           type="text"
           name="username"
           placeholder="Username"
-          required
           onChange={handleChange}
+          value={formData.username}
+          required
         /><br />
-
         <input
           type="password"
           name="password"
           placeholder="Password"
-          required
           onChange={handleChange}
+          value={formData.password}
+          required
         /><br />
-
         <button type="submit">Login</button>
       </form>
-
-      {message && <p>{message}</p>}
+      <p>{message}</p>
     </div>
   );
-};
+}
 
 export default Login;
