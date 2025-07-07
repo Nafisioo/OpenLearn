@@ -58,15 +58,50 @@ class MarkLessonCompleteView(generics.CreateAPIView):
         lesson_id = kwargs.get('lesson_id')
         lesson = get_object_or_404(Lesson, id=lesson_id)
 
+        enrollment = Enrollment.objects.filter(user=request.user, course=lesson.course).first()
+        if not enrollment:
+            return Response({"detail": "You are not enrolled in this course."},
+                            status=status.HTTP_403_FORBIDDEN)
+
         progress, created = UserLessonProgress.objects.get_or_create(
-            user=request.user,
+            enrollment=enrollment,
             lesson=lesson,
             defaults={'completed': True}
         )
 
-        if not created:
+        if not created and not progress.completed:
             progress.completed = True
             progress.save()
 
         serializer = self.get_serializer(progress)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+class CourseProgressView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, course_id): 
+        course = Course.objects.filter(pk=course_id).first()
+        if not course:
+            return Response({"detail": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        lessons = Lesson.objects.filter(course=course)
+        total = lessons.count()
+        enrollment = Enrollment.objects.filter(user=request.user, course=course).first()
+        if not enrollment:
+            return Response({"detail": "You are not enrolled in this course."},
+                            status=status.HTTP_403_FORBIDDEN)
+        completed = UserLessonProgress.objects.filter(
+            enrollment=enrollment,
+            lesson__in=lessons,
+            completed=True
+        ).count()
+
+        progress = int((completed / total) * 100) if total > 0 else 0
+
+        return Response({
+            "course": course.title,
+            "total_lessons": total,
+            "completed_lessons": completed,
+            "progress_percent": progress
+        })
+

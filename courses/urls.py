@@ -4,13 +4,16 @@ from .views import (
     CourseDetailView,
     EnrollInCourseView,
     EnrolledCoursesListView,
-    MarkLessonCompleteView
+    MarkLessonCompleteView,
+    CourseProgressView,
 )
 
 urlpatterns = [
-    path('<int:pk>/', CourseDetailView.as_view(), name='course-detail'),
-    path('create/', CourseCreateView.as_view(), name='course-create'),
-    path('<int:pk>/enroll/', EnrollInCourseView.as_view(), name='course-enroll'),
-    path('my-enrollments/', EnrolledCoursesListView.as_view(), name='my-enrollments'),
-    path('lessons/<int:lesson_id>/complete/', MarkLessonCompleteView.as_view(), name='lesson-complete'),
+    path('create/', CourseCreateView.as_view(), name='course_create'),  # Consistent snake_case naming
+    path('<int:pk>/', CourseDetailView.as_view(), name='course_detail'),
+    path('<int:pk>/enroll/', EnrollInCourseView.as_view(), name='enroll_course'),
+    path('my-enrollments/', EnrolledCoursesListView.as_view(), name='my_enrollments'),
+    path('lessons/<int:lesson_id>/complete/', MarkLessonCompleteView.as_view(), name='mark_lesson_complete'),
+    path('<int:course_id>/progress/', CourseProgressView.as_view(), name='course_progress'),
 ]
+
