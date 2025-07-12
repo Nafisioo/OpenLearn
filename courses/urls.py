@@ -9,7 +9,7 @@ from .views import (
 )
 
 urlpatterns = [
-    path('create/', CourseCreateView.as_view(), name='course_create'),  # Consistent snake_case naming
+    path('create/', CourseCreateView.as_view(), name='course_create'),  
     path('<int:pk>/', CourseDetailView.as_view(), name='course_detail'),
     path('<int:pk>/enroll/', EnrollInCourseView.as_view(), name='enroll_course'),
     path('my-enrollments/', EnrolledCoursesListView.as_view(), name='my_enrollments'),

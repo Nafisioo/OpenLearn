@@ -1,5 +1,7 @@
 from django.contrib import admin
 from .models import Course, Lesson, Enrollment, UserLessonProgress
+from core.models import Category
+
 
 class LessonInline(admin.TabularInline):
     model = Lesson
@@ -7,21 +9,24 @@ class LessonInline(admin.TabularInline):
     fields = ('title', 'order')
     ordering = ['order']
 
+
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ('title', 'instructor', 'created_at')
-    search_fields = ('title', 'description', 'instructor__username')
-    list_filter = ('created_at',)
+    list_display = ('title', 'category', 'instructor', 'created_at')
+    search_fields = ('title', 'description', 'instructor__username', 'category__name')
+    list_filter = ('category', 'created_at')
     inlines = [LessonInline]
     readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
         (None, {
-            'fields': ('title', 'description', 'instructor')
+            'fields': ('title', 'description', 'category', 'instructor')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at')
         }),
     )
+
+
 @admin.register(Lesson)
 class LessonAdmin(admin.ModelAdmin):
     list_display = ('title', 'course', 'order')
@@ -29,11 +34,13 @@ class LessonAdmin(admin.ModelAdmin):
     list_filter = ('course',)
     ordering = ['course', 'order']
 
+
 @admin.register(Enrollment)
 class EnrollmentAdmin(admin.ModelAdmin):
     list_display = ('user', 'course', 'enrolled_at')
     search_fields = ('user__username', 'course__title')
     list_filter = ('enrolled_at', 'course')
+
 
 @admin.register(UserLessonProgress)
 class UserLessonProgressAdmin(admin.ModelAdmin):
