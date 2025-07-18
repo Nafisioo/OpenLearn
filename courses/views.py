@@ -1,107 +1,106 @@
-from rest_framework import generics, permissions, status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from .models import Course, Enrollment, Lesson, UserLessonProgress
 from .serializers import (
     CourseSerializer,
-    EnrollmentSerializer,
+    LessonSerializer,
     EnrolledCourseSerializer,
-    UserLessonProgressSerializer
+    UserLessonProgressSerializer,
 )
-from rest_framework.generics import ListAPIView
+from .permissions import IsAdminOrInstructorOwnerOrReadOnly
 
-class CourseCreateView(generics.CreateAPIView):
+
+class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
-    permission_classes = [permissions.IsAdminUser] 
+
+    def get_permissions(self):
+        if self.action == 'create':
+            return [permissions.IsAdminUser()]
+        if self.action in ['update', 'partial_update', 'destroy']:
+            return [permissions.IsAuthenticated(), IsAdminOrInstructorOwnerOrReadOnly()]
+        if self.action in ['enroll', 'progress']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
 
     def perform_create(self, serializer):
         serializer.save(instructor=self.request.user)
 
-class CourseDetailView(generics.RetrieveAPIView):
-    queryset = Course.objects.all()
-    serializer_class = CourseSerializer
-    lookup_field = 'pk'
-
-class EnrollInCourseView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk):
-        course = get_object_or_404(Course, pk=pk)
-
+    @action(detail=True, methods=['post'], url_path='enroll')
+    def enroll(self, request, pk=None):
+        course = self.get_object()
         if Enrollment.objects.filter(user=request.user, course=course).exists():
-            return Response(
-                {"detail": "You are already enrolled in this course."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({"detail": "You are already enrolled in this course."},
+                            status=status.HTTP_400_BAD_REQUEST)
         Enrollment.objects.create(user=request.user, course=course)
-        return Response(
-            {"message": f"Successfully enrolled in {course.title}!"},
-            status=status.HTTP_201_CREATED
-        )
+        return Response({"message": f"Successfully enrolled in {course.title}!"},
+                        status=status.HTTP_201_CREATED)
 
-class EnrolledCoursesListView(ListAPIView):
-    serializer_class = EnrolledCourseSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return Course.objects.filter(enrollment__user=self.request.user)
-
-class MarkLessonCompleteView(generics.CreateAPIView):
-    serializer_class = UserLessonProgressSerializer
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        lesson_id = kwargs.get('lesson_id')
-        lesson = get_object_or_404(Lesson, id=lesson_id)
-
-        enrollment = Enrollment.objects.filter(user=request.user, course=lesson.course).first()
-        if not enrollment:
-            return Response({"detail": "You are not enrolled in this course."},
-                            status=status.HTTP_403_FORBIDDEN)
-
-        progress, created = UserLessonProgress.objects.get_or_create(
-            enrollment=enrollment,
-            lesson=lesson,
-            defaults={'completed': True}
-        )
-
-        if not created and not progress.completed:
-            progress.completed = True
-            progress.save()
-
-        serializer = self.get_serializer(progress)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-class CourseProgressView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, course_id): 
-        course = Course.objects.filter(pk=course_id).first()
-        if not course:
-            return Response({"detail": "Course not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        lessons = Lesson.objects.filter(course=course)
+    @action(detail=True, methods=['get'], url_path='progress')
+    def progress(self, request, pk=None):
+        course = self.get_object()
+        lessons = course.lessons.all()
         total = lessons.count()
         enrollment = Enrollment.objects.filter(user=request.user, course=course).first()
         if not enrollment:
-            return Response({"detail": "You are not enrolled in this course."},
+            return Response({"detail": "You are not enrolled in this course."}, 
                             status=status.HTTP_403_FORBIDDEN)
         completed = UserLessonProgress.objects.filter(
             enrollment=enrollment,
             lesson__in=lessons,
             completed=True
         ).count()
-
-        progress = int((completed / total) * 100) if total > 0 else 0
-
+        percent = int((completed / total) * 100) if total else 0
         return Response({
             "course": course.title,
             "total_lessons": total,
             "completed_lessons": completed,
-            "progress_percent": progress
+            "progress_percent": percent
         })
 
+
+class LessonViewSet(viewsets.ModelViewSet):
+    queryset = Lesson.objects.all()
+    serializer_class = LessonSerializer
+
+    def get_permissions(self):
+        if self.action in ['update','partial_update','destroy']:
+            return [
+                permissions.IsAuthenticated(),
+                IsAdminOrInstructorOwnerOrReadOnly()
+            ]
+        return [permissions.AllowAny()]
+
+
+class EnrolledCoursesListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        qs = Course.objects.filter(enrollment__user=request.user)
+        serializer = EnrolledCourseSerializer(qs, many=True)
+        return Response(serializer.data)
+
+
+class MarkLessonCompleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id=None):
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        enrollment = Enrollment.objects.filter(user=request.user, course=lesson.course).first()
+        if not enrollment:
+            return Response({"detail": "You are not enrolled in this course."},
+                            status=status.HTTP_403_FORBIDDEN)
+        progress, created = UserLessonProgress.objects.get_or_create(
+            enrollment=enrollment,
+            lesson=lesson,
+            defaults={'completed': True}
+        )
+        if not created and not progress.completed:
+            progress.completed = True
+            progress.save()
+        serializer = UserLessonProgressSerializer(progress)
+        return Response(serializer.data, status=status.HTTP_200_OK)

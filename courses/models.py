@@ -21,7 +21,7 @@ class Enrollment(models.Model):
         unique_together = ('user', 'course')
 
     def __str__(self):
-        return f"{self.user.username} -> {self.course.title}"
+        return f"{self.user.username} enrolled in {self.course.title}"
 
 class Lesson(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='lessons')
@@ -35,7 +35,7 @@ class Lesson(models.Model):
     def __str__(self):
         return f"{self.title} - {self.course.title}"
 class UserLessonProgress(models.Model):
-    enrollment = models.ForeignKey(Enrollment, on_delete=models.CASCADE)
+    enrollment = models.ForeignKey(Enrollment, on_delete=models.CASCADE, related_name='lesson_progress')
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE)
     completed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -44,5 +44,5 @@ class UserLessonProgress(models.Model):
         unique_together = ('enrollment', 'lesson')
 
     def __str__(self):
-        return f"{self.enrollment.username} - {self.lesson.title} - {'Done' if self.completed else 'Not Done'}"
+        return f"{self.enrollment.user.username} - {self.lesson.title} - {'Done' if self.completed else 'Not Done'}"
 
