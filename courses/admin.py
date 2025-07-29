@@ -1,6 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, Enrollment, UserLessonProgress
-from core.models import Category
+from .models import Course, Lesson, Enrollment, Category
 
 
 class LessonInline(admin.TabularInline):
@@ -41,14 +40,4 @@ class EnrollmentAdmin(admin.ModelAdmin):
     search_fields = ('user__username', 'course__title')
     list_filter = ('enrolled_at', 'course')
 
-
-@admin.register(UserLessonProgress)
-class UserLessonProgressAdmin(admin.ModelAdmin):
-    list_display = ('get_user', 'lesson', 'completed')
-    list_filter = ('completed', 'lesson__course')
-    search_fields = ('enrollment__user__username', 'lesson__title')
-
-    def get_user(self, obj):
-        return obj.enrollment.user.username if obj.enrollment else '—'
-    get_user.short_description = 'User'
 

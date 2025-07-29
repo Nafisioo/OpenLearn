@@ -6,9 +6,12 @@ class Course(models.Model):
     description = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    instructor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='courses')
-    enrollments = models.ManyToManyField(settings.AUTH_USER_MODEL, through="Enrollment", related_name="enrolled_courses")
-    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='courses')
+    instructor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='courses_taught')
+    students = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, through="Enrollment", related_name="courses_enrolled")
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='courses')
     def __str__(self):
         return self.title 
     
