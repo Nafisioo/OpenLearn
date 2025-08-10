@@ -1,7 +1,8 @@
 from .base import *
 
-# In development we want verbose errors and the local SQLite DB
+
 DEBUG = True
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
 
 # SQLite by default
 DATABASES = {
@@ -11,5 +12,3 @@ DATABASES = {
     )
 }
 
-# Allow localhost in dev
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']

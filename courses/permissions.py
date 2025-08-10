@@ -20,5 +20,3 @@ class IsAdminOrInstructorOwnerOrReadOnly(BasePermission):
             return obj.course.instructor == request.user
 
         return False
-
-

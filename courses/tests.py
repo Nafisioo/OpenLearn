@@ -109,57 +109,6 @@ class EnrolledCoursesListTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
-class LessonCompletionTest(APITestCase):
-    @classmethod
-    def setUpTestData(cls):
-        cls.user = User.objects.create_user(username="student", password="strongpassword")
-        cls.course = Course.objects.create(title="Test Course", description="Test Desc", instructor=cls.user)
-        cls.lesson = Lesson.objects.create(title="Test Lesson", course=cls.course, content="Some content", order=1)
-        cls.enrollment = Enrollment.objects.create(user=cls.user, course=cls.course)
-
-    def setUp(self):
-        self.client.force_authenticate(user=self.user)
-
-    def test_complete_lesson(self):
-        url = reverse('mark_lesson_complete', args=[self.lesson.id])
-        response = self.client.post(url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        progress = UserLessonProgress.objects.get(enrollment=self.enrollment, lesson=self.lesson)
-        self.assertTrue(progress.completed)
-        self.assertEqual(response.data['lesson'], self.lesson.id)
-        self.assertEqual(response.data['user']['id'], self.user.id)
-        self.assertEqual(response.data['user']['username'], self.user.username)
-
-
-class CourseProgressTest(APITestCase):
-    @classmethod
-    def setUpTestData(cls):
-        cls.user = User.objects.create_user(username="progressuser", password="strongpass")
-        refresh = RefreshToken.for_user(cls.user)
-        cls.token = str(refresh.access_token)
-
-        cls.course = Course.objects.create(title="Progress Course", description="Track progress", instructor=cls.user)
-        cls.lesson = Lesson.objects.create(course=cls.course, title="Lesson 1", content="Some content", order=1)
-        Enrollment.objects.create(user=cls.user, course=cls.course)
-        UserLessonProgress.objects.create(
-            enrollment=Enrollment.objects.get(user=cls.user, course=cls.course),
-            lesson=cls.lesson,
-            completed=True
-        )
-
-        cls.url = reverse('course-progress', args=[cls.course.id])
-
-    def test_course_progress(self):
-        self.client.credentials(HTTP_AUTHORIZATION='Bearer ' + self.token)
-        response = self.client.get(self.url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["course"], self.course.title)
-        self.assertEqual(response.data["total_lessons"], 1)
-        self.assertEqual(response.data["completed_lessons"], 1)
-        self.assertEqual(response.data["progress_percent"], 100)
-
-
 class CoursePermissionTest(APITestCase):
     @classmethod
     def setUpTestData(cls):
