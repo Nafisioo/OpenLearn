@@ -15,24 +15,29 @@ class CustomUserManager(UserManager):
         if query:
             q = (
                 Q(username__icontains=query)
-                |Q(first_name__incontains=query)
-                |Q(last_name__incontains=query)
-                |Q(email_incontains=query)
+                | Q(first_name__icontains=query)   
+                | Q(last_name__icontains=query)    
+                | Q(email__icontains=query)        
             )
-            qs = qs.filter(q).distinct
+            qs = qs.filter(q).distinct()           
         return qs
     
 
 class User(AbstractUser):
     class Role(models.TextChoices):
-        STUDENT = "student", _("Stusent")
+        STUDENT = "student", _("Student")
         INSTRUCTOR = "instructor", _("Instructor")
         ADMIN = "admin", _("Admin")
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.STUDENT)
     phone = models.CharField(max_length=40, blank=True, null=True)
-    picture = models.ImageField(upload_to="profile_pictures/%y/%m/%d/", default="default.png", null=True)
+    picture = models.ImageField(
+        upload_to="profile_pictures/%y/%m/%d/",
+        default="default.png",
+        null=True,
+        blank=True)
     email = models.EmailField(blank=True, null=True)
+
 
     objects = CustomUserManager()
 
@@ -57,32 +62,45 @@ class User(AbstractUser):
         return reverse("accounts:profile", kwargs={"pk": self.pk})
 
     def save(self, *args, **kwargs):
+
         super().save(*args, **kwargs)
+        
+        if Image is None:
+            return
+        if not self.picture:
+            return
         try:
-            img = Image.open(self.picture.path)
-            if img.height > 300 or img.width > 300:
+            if hasattr(self.picture, "path"):
+                img = Image.open(self.picture.path)
                 output_size = (300, 300)
-                img.thumbnail((output_size))
-                img.save(self.picture.path)
+                if img.height > 300 or img.width > 300:
+                    img.thumbnail(output_size)
+                    img.save(self.picture.path)
         except Exception:
             pass
         
 
 BACHELOR = _("Bachelor")
 MASTER = _("Master")
-LEVEL_CHOICES = [(BACHELOR, _("Bachelor Degree")), (MASTER, _("Master Degree"))]
+LEVEL_CHOICES = [
+    (BACHELOR, _("Bachelor Degree")),
+    (MASTER, _("Master Degree"))
+    ]
 
 
 class Student(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="student_profile")
     level = models.CharField(max_length=25, choices=LEVEL_CHOICES,blank=True, null=True)
-    program = models.ForeignKey("courses.course", null=True, blank=True, on_delete=models.SET_NULL, related_name="students_profiles")
+    program = models.ForeignKey("courses.Course", null=True, blank=True, on_delete=models.SET_NULL, related_name="students_profiles")
 
     class Meta:
         ordering = ("-user__date_joined",)
 
     def __str__(self):
         return self.user.get_full_name_or_username()
+    
+    def get_absolute_url(self):
+        return reverse("accounts:student_profile", kwargs={"pk": self.pk})
 
     
 class Parent(models.Model):
