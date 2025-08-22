@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.utils.translation import gettext_lazy as _
@@ -59,6 +59,9 @@ class UserAdmin(DjangoUserAdmin):
     search_fields = ("username", "first_name", "last_name", "email")
     ordering = ("-date_joined",)
 
+
+    readonly_fields = ("last_login", "date_joined")
+
     fieldsets = (
         (None, {"fields": ("username", "password")}),
         (_("Personal info"), {"fields": ("first_name", "last_name", "email", "phone", "picture", "role")}),
@@ -86,49 +89,50 @@ class UserAdmin(DjangoUserAdmin):
     )
 
     def get_inline_instances(self, request, obj=None):
-        inline_instances = []
-        if obj:
-            for inline in self.inlines:
-                inline_instances.append(inline(self.model, self.admin_site))
-        return inline_instances
-
+        if not obj:
+            return []
+        return super.get_inline_instances(request, obj)
+    
     @admin.action(description="Set selected users role → Student")
     def make_students(self, request, queryset):
         with transaction.atomic():
-            queryset.update(role=User.Role.STUDENT)
+            updated = queryset.update(role=User.Role.STUDENT)
             created = 0
-            for user in queryset:
-                obj, was_created = Student.objects.get_or_create(user=user)
-                if was_created:
-                    created += 1
-        self.message_user(request, f"Marked {queryset.count()} users as Student. Created {created} Student profile(s).")
+            users = User.objects.filter(pk__in=queryset.values_list("pk", flat=True))
+            for user in users:
+                _, was_created = Student.objects.get_or_create(user=user)
+        self.message_user(request, f"Marked {updated} user(s) as Student. Created {created} Student profile(s).")
 
     @admin.action(description="Set selected users role → Instructor")
     def make_instructors(self, request, queryset):
-        queryset.update(role=User.Role.INSTRUCTOR)
-        self.message_user(request, f"Marked {queryset.count()} users as Instructor.")
+        updated = queryset.update(role=User.Role.INSTRUCTOR)
+        self.message_user(request, f"Marked {updated} users as Instructor.")
 
     @admin.action(description="Set selected users role → Admin (is_staff=True)")
     def make_admins(self, request, queryset):
-        queryset.update(role=User.Role.ADMIN, is_staff=True)
-        self.message_user(request, f"Marked {queryset.count()} users as Admin and set is_staff=True.")
+        if not request.user.is_superuser:
+            self.message_user(request, "Only superusers can promote users to Admin.", level=messages.ERROR)
+            return
+        updated = queryset.update(role=User.Role.ADMIN, is_staff=True)
+        self.message_user(request, f"Marked {updated} user(s) as Admin and set is_staff=True.")
 
     @admin.action(description="Enable selected users (is_active=True)")
     def enable_users(self, request, queryset):
-        queryset.update(is_active=True)
-        self.message_user(request, f"Enabled {queryset.count()} user(s).")
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f"Enabled {updated} user(s).")
 
     @admin.action(description="Disable selected users (is_active=False)")
     def disable_users(self, request, queryset):
-        queryset.update(is_active=False)
-        self.message_user(request, f"Disabled {queryset.count()} user(s).")
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f"Disabled {updated} user(s).")
 
     @admin.action(description="Create missing Student profiles for selected users")
     def create_student_profiles(self, request, queryset):
         created = 0
         with transaction.atomic():
-            for user in queryset:
-                obj, was_created = Student.objects.get_or_create(user=user)
+            users = User.objects.filter(pk__in=queryset.values_list("pk", flat=True))
+            for user in users:
+                _, was_created = Student.objects.get_or_create(user=user)
                 if was_created:
                     created += 1
         self.message_user(request, f"Created {created} missing Student profile(s).")
@@ -141,6 +145,7 @@ class StudentAdmin(admin.ModelAdmin):
     list_filter = ("level",)
     raw_id_fields = ("user", "program")
     ordering = ("-user__date_joined",)
+    list_select_related = ("user", "program")
 
 
 @admin.register(Parent)
@@ -150,6 +155,12 @@ class ParentAdmin(admin.ModelAdmin):
     filter_horizontal = ("students",)
     raw_id_fields = ("user",)
     ordering = ("-user__date_joined",)
+    list_select_related = ("user",)
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # prefetch students m2m to avoid N+1 when listing or editing parents
+        return qs.prefetch_related("students")
 
 
 @admin.register(DepartmentHead)
@@ -157,3 +168,4 @@ class DepartmentHeadAdmin(admin.ModelAdmin):
     list_display = ("user", "department")
     search_fields = ("user__username", "user__first_name", "user__last_name", "department__title")
     raw_id_fields = ("user", "department")
+    list_select_related = ("user", "department")
