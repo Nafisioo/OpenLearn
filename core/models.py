@@ -25,3 +25,19 @@ class SiteFeedback(TimestampedModel):
 
     def __str__(self):
         return f"Feedback by {self.user.username}"
+    
+
+class ActivityLog(models.Model):
+    message = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.timestamp}: {self.message}"
+    
+
+class Semester(models.Model):
+    semester = models.CharField(max_length=32)
+    is_current_semester = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.semester
