@@ -39,7 +39,8 @@ INSTALLED_APPS = [
     # apps
     'accounts',
     'courses',
-    'core',     # site feedback / categories
+    'core',
+    'config',     # site feedback / categories
     'quizzes',
 ]
 

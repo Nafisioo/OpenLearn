@@ -1,17 +1,17 @@
 from django.conf import settings
 from django.db import models
-from courses.models import Lesson, Enrollment
 from django.core.exceptions import ValidationError
 
 
 User = settings.AUTH_USER_MODEL
 
-
 class Quiz(models.Model):
-    lesson = models.ForeignKey(
-        Lesson,
+    course = models.ForeignKey(
+        "courses.Course",
         on_delete=models.CASCADE,
-        related_name="quizzes"
+        related_name="quizzes",
+        null=True,
+        blank=True,
     )
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -21,7 +21,8 @@ class Quiz(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.title} (Lesson: {self.lesson.title})"
+        course_title = getattr(self.course, "title", "No Course")
+        return f"{self.title} (Course: {course_title})"
 
 
 class Question(models.Model):
@@ -40,7 +41,7 @@ class Question(models.Model):
     )
     text = models.TextField()
     order = models.PositiveIntegerField()
-    type      = models.CharField(max_length=4, choices=QUESTION_TYPES, default=MULTIPLE_CHOICE)
+    type = models.CharField(max_length=4, choices=QUESTION_TYPES, default=MULTIPLE_CHOICE)
 
     class Meta:
         ordering = ["order"]
@@ -64,15 +65,14 @@ class Choice(models.Model):
 
 
 class QuizAttempt(models.Model):
-    """
-    When a user takes a quiz, we record an attempt.
-    """
-    enrollment = models.ForeignKey(
-        Enrollment,
-        on_delete=models.CASCADE,
-        related_name="quiz_attempts",
+   
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
+        related_name="quiz_attempts",
+        help_text="User who attempted the quiz (nullable to preserve historical attempts)."
     )
     quiz = models.ForeignKey(
         Quiz,
@@ -89,20 +89,19 @@ class QuizAttempt(models.Model):
         help_text="Percentage score from 0.00 to 100.00",
         null=True,
         blank=True,
-
     )
 
     class Meta:
-        unique_together = ("enrollment", "quiz")
+        unique_together = ("user", "quiz")
 
     def __str__(self):
-        return f"{self.enrollment.user.username} on {self.quiz.title}"
+        username = getattr(self.user, "username", None) or "UnknownUser"
+        quiz_title = getattr(self.quiz, "title", "No Quiz")
+        return f"{username} on {quiz_title}"
 
 
 class Answer(models.Model):
-    """
-    Stores the choice a user selected for a given question in a QuizAttempt.
-    """
+   
     attempt = models.ForeignKey(
         QuizAttempt,
         on_delete=models.CASCADE,
@@ -118,10 +117,10 @@ class Answer(models.Model):
         null=True, blank=True, related_name="+",
         help_text="Which MCQ choice they picked (if MCQ)",
     )
-    free_response   = models.TextField(
-                        null=True, blank=True,
-                        help_text="User’s free-form/anatomical answer"
-                      )
+    free_response = models.TextField(
+        null=True, blank=True,
+        help_text="User’s free-form/anatomical answer"
+    )
 
     class Meta:
         unique_together = ("attempt", "question")
@@ -130,13 +129,18 @@ class Answer(models.Model):
         if self.question.type == Question.MULTIPLE_CHOICE:
             if self.selected_choice is None:
                 raise ValidationError("Must select one of the MCQ choices.")
-        else: 
+            if self.selected_choice and self.selected_choice.question_id != self.question_id:
+                raise ValidationError("Selected choice does not belong to this question.")
+        else:
             if not self.free_response:
-                raise ValidationError("Must provide a free‐form/anatomical response.")
+                raise ValidationError("Must provide a free-form/anatomical response.")
 
     def __str__(self):
-        user = self.attempt.enrollment.user.username
-        if self.question.type == Question.MULTIPLE_CHOICE:
+        user = None
+        if self.attempt and self.attempt.user:
+            user = getattr(self.attempt.user, "username", None)
+        user = user or "UnknownUser"
+        if self.question.type == Question.MULTIPLE_CHOICE and self.selected_choice:
             return f"{user}: Q{self.question.order} → {self.selected_choice.text[:30]}"
         return f"{user}: Q{self.question.order} → {self.free_response[:30]}"
 

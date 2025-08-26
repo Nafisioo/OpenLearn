@@ -1,43 +1,62 @@
 from django.contrib import admin
-from .models import Course, Lesson, Enrollment, Category
-
-
-class LessonInline(admin.TabularInline):
-    model = Lesson
-    extra = 1
-    fields = ('title', 'order')
-    ordering = ['order']
+from django.utils.translation import gettext_lazy as _
+from .models import Course, CourseAllocation
 
 
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ('title', 'category', 'instructor', 'created_at')
-    search_fields = ('title', 'description', 'instructor__username', 'category__name')
-    list_filter = ('category', 'created_at')
-    inlines = [LessonInline]
-    readonly_fields = ('created_at', 'updated_at')
+    list_display = (
+        "title",
+        "code",
+        "program",
+        "level",
+        "year",
+        "semester",
+        "instructor",
+        "is_elective",
+    )
+    search_fields = (
+        "title",
+        "summary",
+        "code",
+        "slug",
+        "instructor__username",
+        "program__title",
+    )
+    list_filter = ("program", "level", "year", "semester", "is_elective")
+    ordering = ("title",)
+    autocomplete_fields = ("instructor", "students")
+    prepopulated_fields = {"slug": ("title",)}
     fieldsets = (
         (None, {
-            'fields': ('title', 'description', 'category', 'instructor')
+            "fields": (
+                "slug",
+                "title",
+                "code",
+                "program",
+                "level",
+                "year",
+                "semester",
+                "credit",
+                "is_elective",
+                "instructor",
+                "students",
+                "summary",
+            )
         }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at')
+        (_("Allocation & Metadata"), {
+            "fields": (),
+            "classes": ("collapse",),
         }),
     )
 
 
-@admin.register(Lesson)
-class LessonAdmin(admin.ModelAdmin):
-    list_display = ('title', 'course', 'order')
-    search_fields = ('title', 'course__title')
-    list_filter = ('course',)
-    ordering = ['course', 'order']
-
-
-@admin.register(Enrollment)
-class EnrollmentAdmin(admin.ModelAdmin):
-    list_display = ('user', 'course', 'enrolled_at')
-    search_fields = ('user__username', 'course__title')
-    list_filter = ('enrolled_at', 'course')
+@admin.register(CourseAllocation)
+class CourseAllocationAdmin(admin.ModelAdmin):
+    list_display = ("lecturer", "session")
+    search_fields = ("lecturer__username", "courses__title")
+    list_filter = ("session",)
+    autocomplete_fields = ("lecturer",)
+    filter_horizontal = ("courses",)
 
 
