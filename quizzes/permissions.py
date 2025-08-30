@@ -1,9 +1,11 @@
 from rest_framework.permissions import BasePermission
-from courses.models import Enrollment
 from .models import QuizAttempt, Quiz
-
+from courses.models import Course
 
 class IsEnrolledInCourse(BasePermission):
+    """
+    Allow access only if request.user is enrolled in quiz.course via Course.students M2M.
+    """
     def has_permission(self, request, view):
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
@@ -12,11 +14,13 @@ class IsEnrolledInCourse(BasePermission):
         if request.method == "POST" and "quiz" in request.data:
             quiz_id = request.data.get("quiz")
             try:
-                quiz = Quiz.objects.get(pk=quiz_id)
+                quiz = Quiz.objects.select_related("course").get(pk=quiz_id)
             except Quiz.DoesNotExist:
                 return False
-            return Enrollment.objects.filter(user=user, course=quiz.lesson.course).exists()
-
+            course = getattr(quiz, "course", None)
+            if course is None:
+                return False
+            return course.students.filter(pk=user.pk).exist()
         return True
 
     def has_object_permission(self, request, view, obj):
@@ -25,16 +29,16 @@ class IsEnrolledInCourse(BasePermission):
             return False
 
         if isinstance(obj, Quiz):
-            course = obj.lesson.course
+            course = getattr(obj, "course", None)
         elif isinstance(obj, QuizAttempt):
-            enrollment = getattr(obj, "enrollment", None)
-            if not enrollment:
-                return False
-            course = enrollment.course
+            course = getattr(obj.quiz, "course", None)
         else:
             return False
 
-        return Enrollment.objects.filter(user=user, course=course).exists()
+        if course is None:
+            return False
+
+        return course.students.filter(pk=user.pk).exists()
 
 
 class IsFirstQuizAttempt(BasePermission):
@@ -49,5 +53,10 @@ class IsFirstQuizAttempt(BasePermission):
         quiz_id = request.data.get("quiz")
         if not quiz_id:
             return True
-
-        return not QuizAttempt.objects.filter(enrollment__user=user, quiz_id=quiz_id).exists()
+        try:
+            quiz = Quiz.objects.get(pk=quiz_id)
+        except Quiz.DoesNotExist:
+            return True
+        if quiz.single_attempt and quiz.attempts.filter(user=user, completed_at__isnull=False).exist():
+            return False
+        return True

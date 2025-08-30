@@ -1,28 +1,48 @@
 from django.conf import settings
-from django.db import models
 from django.core.exceptions import ValidationError
+from django.db import models
+from django.utils import timezone
 
 
-User = settings.AUTH_USER_MODEL
+USER_MODEL = settings.AUTH_USER_MODEL
 
 class Quiz(models.Model):
     course = models.ForeignKey(
         "courses.Course",
         on_delete=models.CASCADE,
         related_name="quizzes",
-        null=True,
-        blank=True,
     )
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    random_order = models.BooleanField(default=False)
+    single_attempt = models.BooleanField(default=False)
+    pass_mark = models.PositiveSmallIntegerField(default=50)
+    draft = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
-        course_title = getattr(self.course, "title", "No Course")
-        return f"{self.title} (Course: {course_title})"
+        return f"{self.title} ({getattr(self.course, 'title', 'No course')})"
+    
+    def clean(self):
+        if not (0 <= self.pass_mark <= 100):
+            raise ValidationError("pass_mark must be between 0 and 100")
+
+    def max_score(self):
+        return self.questions.filter(type=Question.MULTIPLE_CHOICE).count()
+
+    def user_attempts(self, user):
+        return self.attempts.filter(user=user)
+
+    def user_has_completed_attempt(self, user):
+        return self.user_attempts(user).filter(completed_at__isnull=False).exists()
+
+    def allow_new_attempt_for_user(self, user):
+        if not self.single_attempt:
+            return True
+        return not self.user_has_completed_attempt(user)
 
 
 class Question(models.Model):
@@ -31,7 +51,7 @@ class Question(models.Model):
 
     QUESTION_TYPES = [
         (MULTIPLE_CHOICE, "Multiple Choice"),
-        (ANATOMICAL,      "Anatomical / Free Response"),
+        (ANATOMICAL, "Anatomical / Free Response"),
     ]
 
     quiz = models.ForeignKey(
@@ -40,14 +60,14 @@ class Question(models.Model):
         related_name="questions"
     )
     text = models.TextField()
-    order = models.PositiveIntegerField()
+    order = models.PositiveIntegerField(default=0)
     type = models.CharField(max_length=4, choices=QUESTION_TYPES, default=MULTIPLE_CHOICE)
 
     class Meta:
         ordering = ["order"]
 
     def __str__(self):
-        return f"Q{self.order}: {self.text[:50]} [{self.get_type_display()}]"
+        return f"Q{self.order}: {self.text[:80]}"
 
 
 class Choice(models.Model):
@@ -60,67 +80,54 @@ class Choice(models.Model):
     is_correct = models.BooleanField(default=False)
 
     def __str__(self):
-        prefix = "✔" if self.is_correct else "✘"
-        return f"{prefix} {self.text}"
+        return ("✔ " if self.is_correct else "✘ ") + self.text
 
+
+class QuizAttemptManager(models.Manager):
+   
+    def start_attempt(self, user, quiz):
+        if not quiz.allow_new_attempt_for_user(user):
+            raise ValidationError("User is not allowed another attempt for this quiz.")
+        attempts_count = self.filter(user=user, quiz=quiz).count()
+        attempt_number = attempts_count + 1
+        attempt = self.create(
+            user=user,
+            quiz=quiz,
+            attempt_number=attempt_number,
+            started_at=timezone.now(),
+        )
+        return attempt
+    
 
 class QuizAttempt(models.Model):
-   
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="quiz_attempts",
-        help_text="User who attempted the quiz (nullable to preserve historical attempts)."
-    )
-    quiz = models.ForeignKey(
-        Quiz,
-        on_delete=models.CASCADE,
-        related_name="attempts",
-        null=True,
-        blank=True,
-    )
-    started_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    user = models.ForeignKey(USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="quiz_attempts")
+    quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE, related_name="attempts")
+    attempt_number = models.PositiveIntegerField(default=1)
+    started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
-    score = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        help_text="Percentage score from 0.00 to 100.00",
-        null=True,
-        blank=True,
-    )
+    score = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,
+                                help_text="Percentage score 0.00 - 100.00")
+    
+    objects = QuizAttemptManager()
 
     class Meta:
-        unique_together = ("user", "quiz")
+        ordering = ["-started_at"]
+        index_together = (("user", "quiz"),)  
 
     def __str__(self):
-        username = getattr(self.user, "username", None) or "UnknownUser"
-        quiz_title = getattr(self.quiz, "title", "No Quiz")
-        return f"{username} on {quiz_title}"
+        user = getattr(self.user, "username", "Unknown")
+        return f"{user} — {self.quiz.title} (attempt {self.attempt_number})"
+
+    def _mcq_questions(self):
+        return self.quiz.questions.filter(type=Question.MULTIPLE_CHOICE).prefetch_related("choices")
 
 
 class Answer(models.Model):
    
-    attempt = models.ForeignKey(
-        QuizAttempt,
-        on_delete=models.CASCADE,
-        related_name="answers"
-    )
-    question = models.ForeignKey(
-        Question,
-        on_delete=models.CASCADE
-    )
-    selected_choice = models.ForeignKey(
-        Choice,
-        on_delete=models.CASCADE,
-        null=True, blank=True, related_name="+",
-        help_text="Which MCQ choice they picked (if MCQ)",
-    )
-    free_response = models.TextField(
-        null=True, blank=True,
-        help_text="User’s free-form/anatomical answer"
-    )
+    attempt = models.ForeignKey(QuizAttempt, on_delete=models.CASCADE, related_name="answers")
+    question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    selected_choice = models.ForeignKey(Choice, on_delete=models.CASCADE, null=True, blank=True, related_name="+")
+    free_response = models.TextField(null=True, blank=True)
 
     class Meta:
         unique_together = ("attempt", "question")
@@ -129,18 +136,16 @@ class Answer(models.Model):
         if self.question.type == Question.MULTIPLE_CHOICE:
             if self.selected_choice is None:
                 raise ValidationError("Must select one of the MCQ choices.")
-            if self.selected_choice and self.selected_choice.question_id != self.question_id:
+            if self.selected_choice.question.id != self.question_id:
                 raise ValidationError("Selected choice does not belong to this question.")
         else:
             if not self.free_response:
                 raise ValidationError("Must provide a free-form/anatomical response.")
 
     def __str__(self):
-        user = None
-        if self.attempt and self.attempt.user:
-            user = getattr(self.attempt.user, "username", None)
-        user = user or "UnknownUser"
+        user = getattr(self.attempt.user, "username", "UnknownUser")
         if self.question.type == Question.MULTIPLE_CHOICE and self.selected_choice:
-            return f"{user}: Q{self.question.order} → {self.selected_choice.text[:30]}"
-        return f"{user}: Q{self.question.order} → {self.free_response[:30]}"
+            return f"{user}: Q{self.question.order} → {self.selected_choice.text[:40]}"
+        return f"{user}: Q{self.question.order} → {self.free_response[:40]}"
+        
 

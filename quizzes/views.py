@@ -1,5 +1,3 @@
-from django.utils import timezone
-from django.db import IntegrityError
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -8,46 +6,27 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Quiz, QuizAttempt, Answer, Question
 from .serializers import QuizSerializer, AttemptSerializer, AnswerSubmitSerializer
 from .permissions import IsEnrolledInCourse, IsFirstQuizAttempt
-from courses.models import Enrollment
+from courses.models import Course
 
 
 class QuizViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Quiz.objects.all()
+    queryset = Quiz.objects.all().select_related("course")
     serializer_class = QuizSerializer
     permission_classes = [IsAuthenticated, IsEnrolledInCourse]
 
     def get_queryset(self):
         user = self.request.user
-        course_ids = Enrollment.objects.filter(user=user).values_list("course_id", flat=True)
-        return Quiz.objects.filter(lesson__course_id__in=course_ids)
-
-    @action(
-        detail=True,
-        methods=["post"],
-        permission_classes=[IsAuthenticated, IsEnrolledInCourse, IsFirstQuizAttempt],
-    )
-    def start(self, request, pk=None):
-        quiz = self.get_object()
-        try:
-            enrollment = Enrollment.objects.get(user=request.user, course=quiz.lesson.course)
-        except Enrollment.DoesNotExist:
-            return Response({"detail": "Not enrolled."}, status=status.HTTP_403_FORBIDDEN)
-
-        if QuizAttempt.objects.filter(enrollment=enrollment, quiz=quiz).exists():
-            return Response({"detail": "Attempt already exists."}, status=status.HTTP_400_BAD_REQUEST)
-
-        attempt = QuizAttempt.objects.create(enrollment=enrollment, quiz=quiz, started_at=timezone.now())
-        serializer = AttemptSerializer(attempt, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        course_ids = Course.objects.filter(Students=user).values_list("id", flat=True)
+        return Quiz.objects.filter(course_id__in=course_ids)
 
 
 class QuizAttemptViewSet(viewsets.ModelViewSet):
-    queryset = QuizAttempt.objects.all()
+    queryset = QuizAttempt.objects.all().select_related("quiz")
     serializer_class = AttemptSerializer
     permission_classes = [IsAuthenticated, IsEnrolledInCourse, IsFirstQuizAttempt]
 
     def get_queryset(self):
-        return QuizAttempt.objects.filter(enrollment__user=self.request.user)
+        return QuizAttempt.objects.filter(user=self.request.user).select_related("quiz")
 
     def create(self, request, *args, **kwargs):
         quiz_id = request.data.get("quiz")
@@ -59,22 +38,21 @@ class QuizAttemptViewSet(viewsets.ModelViewSet):
         except Quiz.DoesNotExist:
             return Response({"detail": "Quiz not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        if not quiz.allow_new_attempt_for_user(request.user):
+            return Response({"detail": "You are not allowed another attempt for this quiz."}, status=status.HTTP_403_FORBIDDEN)
+        
         try:
-            enrollment = Enrollment.objects.get(user=request.user, course=quiz.lesson.course)
-        except Enrollment.DoesNotExist:
-            return Response({"detail": "You are not enrolled in this course."}, status=status.HTTP_403_FORBIDDEN)
-
-        if QuizAttempt.objects.filter(enrollment=enrollment, quiz=quiz).exists():
-            return Response({"detail": "Attempt already exists."}, status=status.HTTP_400_BAD_REQUEST)
-
-        attempt = QuizAttempt.objects.create(enrollment=enrollment, quiz=quiz, started_at=timezone.now())
+            attempt = QuizAttempt.objects.start_attempt(user=request.user, quiz=quiz)
+        except Exception as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        
         serializer = self.get_serializer(attempt)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"],permission_classes=[IsAuthenticated])
     def answer(self, request, pk=None):
         attempt = self.get_object()
-        if attempt.enrollment.user != request.user:
+        if attempt.user_id != request.user.id:
             return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = AnswerSubmitSerializer(data=request.data)
@@ -95,23 +73,19 @@ class QuizAttemptViewSet(viewsets.ModelViewSet):
             "free_response": free_response,
         }
 
-        answer, created = Answer.objects.get_or_create(
+        answer_obj, created = Answer.objects.update_or_create(
             attempt=attempt,
             question=question,
             defaults=defaults,
         )
-        if not created:
-            answer.selected_choice = selected_choice
-            answer.free_response = free_response
-            answer.save()
 
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response({"detail": "Answer recorded"}, status=status_code)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def complete(self, request, pk=None):
         attempt = self.get_object()
-        if attempt.enrollment.user != request.user:
+        if attempt.user_id != request.user.id:
             return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
         mcq_questions_qs = attempt.quiz.questions.filter(type=Question.MULTIPLE_CHOICE)
@@ -120,8 +94,6 @@ class QuizAttemptViewSet(viewsets.ModelViewSet):
         mcq_answers = attempt.answers.filter(question__type=Question.MULTIPLE_CHOICE)
         correct = sum(1 for ans in mcq_answers if ans.selected_choice and ans.selected_choice.is_correct)
 
-        score = (correct / total_mcq * 100.0) if total_mcq else 0.0
-        attempt.score = score
-        attempt.completed_at = timezone.now()
-        attempt.save(update_fields=["score", "completed_at"])
-        return Response({"score": float(score)}, status=status.HTTP_200_OK)
+        serializer = AttemptSerializer(context={"request": request})
+        score = serializer.complete_attempt(attempt)
+        return Response({"score": score}, status=status.HTTP_200_OK)
