@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.core.exceptions import ValidationError
+
 from django.db import models
 from django.utils import timezone
 
@@ -112,7 +112,9 @@ class QuizAttempt(models.Model):
 
     class Meta:
         ordering = ["-started_at"]
-        index_together = (("user", "quiz"),)  
+        indexes = [
+            models.Index(fields=["quiz", "user"], name="qa_quiz_user_idx"),
+        ]
 
     def __str__(self):
         user = getattr(self.user, "username", "Unknown")
