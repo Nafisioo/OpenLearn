@@ -91,7 +91,7 @@ LEVEL_CHOICES = [
 class Student(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="student_profile")
     level = models.CharField(max_length=25, choices=LEVEL_CHOICES,blank=True, null=True)
-    program = models.ForeignKey("courses.Course", null=True, blank=True, on_delete=models.SET_NULL, related_name="students_profiles")
+    program = models.ForeignKey("courses.Program", null=True, blank=True, on_delete=models.SET_NULL, related_name="students_profiles")
 
     class Meta:
         ordering = ("-user__date_joined",)

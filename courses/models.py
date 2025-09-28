@@ -7,9 +7,8 @@ from django.dispatch import receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 
-from core.models import ActivityLog, Semester
+from core.models import ActivityLog, Semester, Session
 from core.utils import unique_slug_generator
-
 
 # --- PROGRAM ---
 
@@ -81,7 +80,7 @@ class Course(models.Model):
     summary = models.TextField(max_length=200, blank=True)
     program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name="courses")
     level = models.CharField(max_length=25, choices=LEVEL_CHOICES)
-    year = models.PositiveSmallIntegerField(YEARS, default=1)
+    year = models.PositiveSmallIntegerField(choices=YEARS, default=1)
     semester = models.CharField(choices=SEMESTER_CHOICES, max_length=200)
     is_elective = models.BooleanField(default=False)
 
@@ -100,7 +99,7 @@ class Course(models.Model):
     objects = CourseManager()
 
     class Meta:
-        ordering = ("-created_at",) if hasattr(models.Model, "created_at") else ()
+        ordering = ("-id",)
 
     def __str__(self):
         return f"{self.title} ({self.code})"
@@ -111,25 +110,61 @@ class Course(models.Model):
 
     @property
     def is_current_semester(self):
-        current = Semester.objects.filter(is_current_semester=True).first()
+        current = Semester.objects.get_current()
         return self.semester == getattr(current, "semester", None)
     
-    def enroll(self, user):
+    def current_offering(self):
+        """
+        Convenience helper: returns the current CourseOffering (if any)
+        for the current session and semester.
+        """
+        # 'offerings' related_name is defined on CourseOffering below
+        qs = getattr(self, "offerings", self.courseoffering_set)
+        session = Session.get_current()
+        semester = Semester.get_current()
+        if session and semester:
+            return qs.filter(session=session, semester=semester).first()
+        if session:
+            return qs.filter(session=session).first()
+        if semester:
+            return qs.filter(semester=semester).first()
+        return qs.first()
+
+    def enroll(self, user, offering=None):
+        """
+        Enroll user in an offering if provided, otherwise in current offering.
+        Falls back to legacy course.students M2M if no offering exists.
+        """
         if user is None:
             return
-        if not self.students.filter(pk=user.pk).exists():
-            self.students.add(user)
+        if offering is None:
+            offering = self.current_offering()
+        if offering is None:
+            # fallback to course-level M2M (legacy)
+            if not self.students.filter(pk=user.pk).exists():
+                self.students.add(user)
+            return
+        offering.enroll(user)
 
-    def unenroll(self, user):
+    def unenroll(self, user, offering=None):
         if user is None:
             return
-        if self.students.filter(pk=user.pk).exists():
-            self.students.remove(user)
+        if offering is None:
+            offering = self.current_offering()
+        if offering is None:
+            if self.students.filter(pk=user.pk).exists():
+                self.students.remove(user)
+            return
+        offering.unenroll(user)
 
-    def is_enrolled(self, user):
+    def is_enrolled(self, user, offering=None):
         if user is None:
             return False
-        return self.students.filter(pk=user.pk).exists()
+        if offering is None:
+            offering = self.current_offering()
+        if offering is None:
+            return self.students.filter(pk=user.pk).exists()
+        return offering.is_enrolled(user)
 
 @receiver(pre_save, sender=Course)
 def course_pre_save_receiver(sender, instance, **kwargs):
@@ -150,6 +185,55 @@ def log_course_delete(sender, instance, **kwargs):
         ActivityLog.objects.create(message=_(f"The course '{instance}' has been deleted."))
     except Exception:
         pass
+
+
+class CourseOffering(models.Model):
+    """
+    Represents a specific offering/section of a Course in a particular Session and Semester,
+    with a specific instructor and enrolled students.
+    """
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="offerings")
+    session = models.ForeignKey("core.Session", on_delete=models.SET_NULL, related_name="course_offerings", null=True, blank=True)
+    semester = models.ForeignKey("core.Semester", on_delete=models.SET_NULL, related_name="course_offerings", null=True, blank=True)
+    instructor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="course_offerings")
+    students = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="course_offerings_enrolled", blank=True)
+
+    is_elective = models.BooleanField(default=False)
+    capacity = models.PositiveIntegerField(null=True, blank=True, help_text="Optional capacity limit for this offering")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["session", "semester"]),
+            models.Index(fields=["course"]),
+        ]
+
+    def __str__(self):
+        session_label = str(self.session) if self.session else "NoSession"
+        semester_label = str(self.semester) if self.semester else "NoSemester"
+        return f"{self.course} — {session_label}/{semester_label}"
+
+    def enroll(self, user):
+        if user is None:
+            return
+        if self.capacity is not None and self.students.count() >= self.capacity:
+            # could raise a ValidationError or return False to signal full capacity
+            return
+        if not self.students.filter(pk=user.pk).exists():
+            self.students.add(user)
+
+    def unenroll(self, user):
+        if user is None:
+            return
+        if self.students.filter(pk=user.pk).exists():
+            self.students.remove(user)
+
+    def is_enrolled(self, user):
+        if user is None:
+            return False
+        return self.students.filter(pk=user.pk).exists()
+
 
 # --- COURSE ALLOCATION ---
 
@@ -193,7 +277,7 @@ class Upload(models.Model):
             ("pdf",): "pdf",
             ("xls", "xlsx"): "excel",
             ("ppt", "pptx"): "powerpoint",
-            ("zip", "rar", "7zip"): "archive",
+            ("zip", "rar", "7z"): "archive",
         }
         for exts, label in mapping.items():
             if ext in exts:
