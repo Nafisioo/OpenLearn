@@ -25,7 +25,7 @@ class CourseAdmin(admin.ModelAdmin):
     )
     list_filter = ("program", "level", "year", "semester", "is_elective")
     ordering = ("title",)
-    autocomplete_fields = ("instructor", "students")
+    autocomplete_fields = ("instructor",)
     prepopulated_fields = {"slug": ("title",)}
     fieldsets = (
         (None, {
@@ -40,7 +40,6 @@ class CourseAdmin(admin.ModelAdmin):
                 "credit",
                 "is_elective",
                 "instructor",
-                "students",
                 "summary",
             )
         }),
@@ -53,10 +52,7 @@ class CourseAdmin(admin.ModelAdmin):
 
 @admin.register(CourseAllocation)
 class CourseAllocationAdmin(admin.ModelAdmin):
-    list_display = ("lecturer", "session")
-    search_fields = ("lecturer__username", "courses__title")
-    list_filter = ("session",)
+    list_display = ("lecturer", "offering")
+    search_fields = ("lecturer__username", "offering__course__title")
+    list_filter = ("offering__session", "offering__semester")  
     autocomplete_fields = ("lecturer",)
-    filter_horizontal = ("courses",)
-
-

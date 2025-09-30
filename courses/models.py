@@ -2,7 +2,7 @@ from django.conf import settings
 from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.db.models import Q
-from django.db.models.signals import pre_save, post_delete, post_save
+from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
@@ -10,14 +10,15 @@ from django.utils.translation import gettext_lazy as _
 from core.models import ActivityLog, Semester, Session
 from core.utils import unique_slug_generator
 
-# --- PROGRAM ---
 
+# --- PROGRAM ---
 class ProgramManager(models.Manager):
     def search(self, query=None):
         qs = self.get_queryset()
         if query:
             qs = qs.filter(Q(title__icontains=query) | Q(summary__icontains=query)).distinct()
         return qs
+
 
 class Program(models.Model):
     title = models.CharField(max_length=150, unique=True)
@@ -30,10 +31,12 @@ class Program(models.Model):
     def get_absolute_url(self):
         return reverse("program_detail", kwargs={"pk": self.pk})
 
+
 @receiver(post_save, sender=Program)
 def log_program_save(sender, instance, created, **kwargs):
     verb = "created" if created else "updated"
     ActivityLog.objects.create(message=_(f"The program '{instance}' has been {verb}."))
+
 
 @receiver(post_delete, sender=Program)
 def log_program_delete(sender, instance, **kwargs):
@@ -41,36 +44,27 @@ def log_program_delete(sender, instance, **kwargs):
 
 
 # --- COURSE ---
+LEVEL_CHOICES = [
+    ("bachelor", "Bachelor"),
+    ("master", "Master"),
+]
+
+YEARS = [(1, "Year 1"), (2, "Year 2"), (3, "Year 3"), (4, "Year 4")]
+SEMESTER_CHOICES = [("fall", "Fall"), ("spring", "Spring")]
+
 
 class CourseManager(models.Manager):
     def search(self, query=None):
         qs = self.get_queryset()
         if query:
             qs = qs.filter(
-                Q(title__icontains=query) |
-                Q(summary__icontains=query) |
-                Q(code__icontains=query) |
-                Q(slug__icontains=query)
+                Q(title__icontains=query)
+                | Q(summary__icontains=query)
+                | Q(code__icontains=query)
+                | Q(slug__icontains=query)
             ).distinct()
         return qs
-    
 
-LEVEL_CHOICES = [
-    ('bachelor', 'Bachelor'),
-    ('master', 'Master'),
-]
-
-YEARS = [
-    (1, 'Year 1'),
-    (2, 'Year 2'),
-    (3, 'Year 3'),
-    (4, 'Year 4'),
-]
-
-SEMESTER_CHOICES = [
-    ('fall', 'Fall'),
-    ('spring', 'Spring'),
-]
 
 class Course(models.Model):
     slug = models.SlugField(unique=True, blank=True)
@@ -81,19 +75,11 @@ class Course(models.Model):
     program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name="courses")
     level = models.CharField(max_length=25, choices=LEVEL_CHOICES)
     year = models.PositiveSmallIntegerField(choices=YEARS, default=1)
-    semester = models.CharField(choices=SEMESTER_CHOICES, max_length=200)
+    semester = models.CharField(max_length=10, choices=SEMESTER_CHOICES)
     is_elective = models.BooleanField(default=False)
 
     instructor = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="courses_taught",
-    )
-
-    students = models.ManyToManyField(
-        settings.AUTH_USER_MODEL,
-        related_name="courses_enrolled",
-        blank=True,
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="courses_taught"
     )
 
     objects = CourseManager()
@@ -108,106 +94,37 @@ class Course(models.Model):
         return reverse("course_detail", kwargs={"slug": self.slug})
 
 
-    @property
-    def is_current_semester(self):
-        current = Semester.objects.get_current()
-        return self.semester == getattr(current, "semester", None)
-    
-    def current_offering(self):
-        """
-        Convenience helper: returns the current CourseOffering (if any)
-        for the current session and semester.
-        """
-        # 'offerings' related_name is defined on CourseOffering below
-        qs = getattr(self, "offerings", self.courseoffering_set)
-        session = Session.get_current()
-        semester = Semester.get_current()
-        if session and semester:
-            return qs.filter(session=session, semester=semester).first()
-        if session:
-            return qs.filter(session=session).first()
-        if semester:
-            return qs.filter(semester=semester).first()
-        return qs.first()
-
-    def enroll(self, user, offering=None):
-        """
-        Enroll user in an offering if provided, otherwise in current offering.
-        Falls back to legacy course.students M2M if no offering exists.
-        """
-        if user is None:
-            return
-        if offering is None:
-            offering = self.current_offering()
-        if offering is None:
-            # fallback to course-level M2M (legacy)
-            if not self.students.filter(pk=user.pk).exists():
-                self.students.add(user)
-            return
-        offering.enroll(user)
-
-    def unenroll(self, user, offering=None):
-        if user is None:
-            return
-        if offering is None:
-            offering = self.current_offering()
-        if offering is None:
-            if self.students.filter(pk=user.pk).exists():
-                self.students.remove(user)
-            return
-        offering.unenroll(user)
-
-    def is_enrolled(self, user, offering=None):
-        if user is None:
-            return False
-        if offering is None:
-            offering = self.current_offering()
-        if offering is None:
-            return self.students.filter(pk=user.pk).exists()
-        return offering.is_enrolled(user)
-
 @receiver(pre_save, sender=Course)
-def course_pre_save_receiver(sender, instance, **kwargs):
+def course_pre_save(sender, instance, **kwargs):
     if not instance.slug:
         instance.slug = unique_slug_generator(instance)
+
 
 @receiver(post_save, sender=Course)
 def log_course_save(sender, instance, created, **kwargs):
     verb = "created" if created else "updated"
-    try:
-        ActivityLog.objects.create(message=_(f"The course '{instance}' has been {verb}."))
-    except Exception:
-        pass
+    ActivityLog.objects.create(message=_(f"The course '{instance}' has been {verb}."))
+
 
 @receiver(post_delete, sender=Course)
 def log_course_delete(sender, instance, **kwargs):
-    try:
-        ActivityLog.objects.create(message=_(f"The course '{instance}' has been deleted."))
-    except Exception:
-        pass
+    ActivityLog.objects.create(message=_(f"The course '{instance}' has been deleted."))
 
 
+# --- COURSE OFFERING ---
 class CourseOffering(models.Model):
-    """
-    Represents a specific offering/section of a Course in a particular Session and Semester,
-    with a specific instructor and enrolled students.
-    """
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="offerings")
-    session = models.ForeignKey("core.Session", on_delete=models.SET_NULL, related_name="course_offerings", null=True, blank=True)
-    semester = models.ForeignKey("core.Semester", on_delete=models.SET_NULL, related_name="course_offerings", null=True, blank=True)
+    session = models.ForeignKey(Session, on_delete=models.SET_NULL, null=True, blank=True, related_name="course_offerings")
+    semester = models.ForeignKey(Semester, on_delete=models.SET_NULL, null=True, blank=True, related_name="course_offerings")
     instructor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="course_offerings")
     students = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="course_offerings_enrolled", blank=True)
-
     is_elective = models.BooleanField(default=False)
-    capacity = models.PositiveIntegerField(null=True, blank=True, help_text="Optional capacity limit for this offering")
+    capacity = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("-created_at",)
-        indexes = [
-            models.Index(fields=["session", "semester"]),
-            models.Index(fields=["course"]),
-        ]
+        indexes = [models.Index(fields=["session", "semester"]), models.Index(fields=["course"])]
 
     def __str__(self):
         session_label = str(self.session) if self.session else "NoSession"
@@ -215,146 +132,69 @@ class CourseOffering(models.Model):
         return f"{self.course} — {session_label}/{semester_label}"
 
     def enroll(self, user):
-        if user is None:
-            return
-        if self.capacity is not None and self.students.count() >= self.capacity:
-            # could raise a ValidationError or return False to signal full capacity
-            return
-        if not self.students.filter(pk=user.pk).exists():
+        if user and (self.capacity is None or self.students.count() < self.capacity):
             self.students.add(user)
 
     def unenroll(self, user):
-        if user is None:
-            return
-        if self.students.filter(pk=user.pk).exists():
+        if user:
             self.students.remove(user)
 
     def is_enrolled(self, user):
-        if user is None:
-            return False
-        return self.students.filter(pk=user.pk).exists()
+        return user and self.students.filter(pk=user.pk).exists()
 
 
 # --- COURSE ALLOCATION ---
-
 class CourseAllocation(models.Model):
-    lecturer = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="course_allocations"
-    )
-    courses = models.ManyToManyField(Course, related_name="allocations")
-    session = models.ForeignKey("core.Session", on_delete=models.CASCADE, blank=True, null=True)
+    lecturer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="course_allocations")
+    offering = models.ForeignKey(CourseOffering, on_delete=models.CASCADE, related_name="allocations")
 
     def __str__(self):
-        try:
-            return self.lecturer.get_full_name_or_username()
-        except Exception:
-            return str(self.lecturer)
+        return self.lecturer.get_full_name_or_username()
 
     def get_absolute_url(self):
         return reverse("edit_allocated_course", kwargs={"pk": self.pk})
 
 
-# --- UPLOAD ---
-
-class Upload(models.Model):
-    title = models.CharField(max_length=100)
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="uploads")
-    file = models.FileField(
-        upload_to="course_files/",
-        help_text=_("Valid files: pdf, docx, doc, xls, xlsx, ppt, pptx, zip, rar, 7zip"),
-        validators=[FileExtensionValidator(["pdf", "docx", "doc", "xls", "xlsx", "ppt", "pptx", "zip", "rar", "7zip"])]
-    )
-    updated_date = models.DateTimeField(auto_now=True)
-    upload_time = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return self.title
-
-    def get_extension_short(self):
-        ext = self.file.name.split(".")[-1].lower()
-        mapping = {
-            ("doc", "docx"): "word",
-            ("pdf",): "pdf",
-            ("xls", "xlsx"): "excel",
-            ("ppt", "pptx"): "powerpoint",
-            ("zip", "rar", "7z"): "archive",
-        }
-        for exts, label in mapping.items():
-            if ext in exts:
-                return label
-        return "file"
-
-    def delete(self, *args, **kwargs):
-        self.file.delete(save=False)
-        super().delete(*args, **kwargs)
-
-@receiver(post_save, sender=Upload)
-def log_upload_save(sender, instance, created, **kwargs):
-    msg = (
-        _(f"The file '{instance.title}' has been uploaded to the course '{instance.course}'.")
-        if created else
-        _(f"The file '{instance.title}' of the course '{instance.course}' has been updated.")
-    )
-    ActivityLog.objects.create(message=msg)
-
-@receiver(post_delete, sender=Upload)
-def log_upload_delete(sender, instance, **kwargs):
-    ActivityLog.objects.create(
-        message=_(f"The file '{instance.title}' of the course '{instance.course}' has been deleted.")
-    )
+# --- COURSE RESOURCES (FILES & VIDEOS MERGED) ---
+RESOURCE_TYPES = [("file", "File"), ("video", "Video")]
 
 
-# --- UPLOAD VIDEO ---
-
-class UploadVideo(models.Model):
+class Resource(models.Model):
     title = models.CharField(max_length=100)
     slug = models.SlugField(unique=True, blank=True)
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="videos")
-    video = models.FileField(
-        upload_to="course_videos/",
-        help_text=_("Valid video formats: mp4, mkv, wmv, 3gp, f4v, avi, mp3"),
-        validators=[FileExtensionValidator(["mp4", "mkv", "wmv", "3gp", "f4v", "avi", "mp3"])]
-    )
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="resources")
+    resource_type = models.CharField(max_length=10, choices=RESOURCE_TYPES, default="file")
+    file = models.FileField(upload_to="course_resources/")
     summary = models.TextField(blank=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.title
 
     def get_absolute_url(self):
-        return reverse(
-            "video_single", kwargs={"slug": self.course.slug, "video_slug": self.slug}
-        )
+        return reverse("resource_detail", kwargs={"course_slug": self.course.slug, "slug": self.slug})
 
     def delete(self, *args, **kwargs):
-        self.video.delete(save=False)
+        self.file.delete(save=False)
         super().delete(*args, **kwargs)
 
-@receiver(pre_save, sender=UploadVideo)
-def video_pre_save_receiver(sender, instance, **kwargs):
+
+@receiver(pre_save, sender=Resource)
+def resource_pre_save(sender, instance, **kwargs):
     if not instance.slug:
         instance.slug = unique_slug_generator(instance)
 
-@receiver(post_save, sender=UploadVideo)
-def log_uploadvideo_save(sender, instance, created, **kwargs):
-    msg = (
-        _(f"The video '{instance.title}' has been uploaded to the course '{instance.course}'.")
-        if created else
-        _(f"The video '{instance.title}' of the course '{instance.course}' has been updated.")
-    )
-    ActivityLog.objects.create(message=msg)
 
-@receiver(post_delete, sender=UploadVideo)
-def log_uploadvideo_delete(sender, instance, **kwargs):
+@receiver(post_save, sender=Resource)
+def log_resource_save(sender, instance, created, **kwargs):
+    verb = "uploaded" if created else "updated"
     ActivityLog.objects.create(
-        message=_(f"The video '{instance.title}' of the course '{instance.course}' has been deleted.")
+        message=_(f"The {instance.resource_type} '{instance.title}' has been {verb} to course '{instance.course}'.")
     )
 
 
-# --- COURSE OFFER ---
-
-class CourseOffer(models.Model):
-    dep_head = models.ForeignKey("accounts.DepartmentHead", on_delete=models.CASCADE, related_name="course_offers")
-
-    def __str__(self):
-        return str(self.dep_head)
+@receiver(post_delete, sender=Resource)
+def log_resource_delete(sender, instance, **kwargs):
+    ActivityLog.objects.create(
+        message=_(f"The {instance.resource_type} '{instance.title}' of course '{instance.course}' has been deleted.")
+    )

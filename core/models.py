@@ -3,7 +3,7 @@ from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-
+from functools import lru_cache
 
 
 class PostType(models.TextChoices):
@@ -27,7 +27,7 @@ class NewsAndEventsQuerySet(models.QuerySet):
             | Q(posted_as__icontains=query)
         )
         return self.filter(lookups).distinct()
-    
+
 
 class NewsAndEventsManager(models.Manager):
     def get_queryset(self):
@@ -38,7 +38,7 @@ class NewsAndEventsManager(models.Manager):
 
     def get_by_id(self, pk: int):
         return self.get_queryset().filter(pk=pk).first()
-    
+
 
 class NewsAndEvents(models.Model):
     title = models.CharField(max_length=200)
@@ -60,10 +60,10 @@ class NewsAndEvents(models.Model):
 
     def __str__(self) -> str:
         return self.title or f"NewsAndEvents {self.pk}"
-    
+
 
 class Session(models.Model):
-    name = models.CharField(max_length=200, unique=True)  
+    name = models.CharField(max_length=200, unique=True)
     is_current = models.BooleanField(default=False)
     next_session_begins = models.DateField(blank=True, null=True)
 
@@ -83,14 +83,21 @@ class Session(models.Model):
         super().save(*args, **kwargs)
 
     @classmethod
+    @lru_cache(maxsize=1)
     def get_current(cls):
         return cls.objects.filter(is_current=True).first()
-    
+
 
 class Semester(models.Model):
     semester = models.CharField(max_length=10, choices=SemesterChoice.choices)
     is_current = models.BooleanField(default=False)
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="semesters", null=True, blank=True)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="semesters",
+        null=True,
+        blank=True,
+    )
     next_semester_begins = models.DateField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -110,28 +117,42 @@ class Semester(models.Model):
 
     def save(self, *args, **kwargs):
         with transaction.atomic():
-            if self.is_current and self.session_id:
-                q = self.__class__.objects.filter(is_current=True, session=self.session).exclude(pk=self.pk)
-                q.update(is_current=False)
-            elif self.is_current and not self.session_id:
-                q = self.__class__.objects.filter(is_current=True, session__isnull=True).exclude(pk=self.pk)
-                q.update(is_current=False)
+            if self.is_current:
+                qs = self.__class__.objects.filter(is_current=True)
+                if self.session_id:
+                    qs = qs.filter(session=self.session)
+                else:
+                    qs = qs.filter(session__isnull=True)
+                qs.exclude(pk=self.pk).update(is_current=False)
         super().save(*args, **kwargs)
 
     @classmethod
+    @lru_cache(maxsize=1)
     def get_current(cls):
         return cls.objects.filter(is_current=True).first()
 
 
 class ActivityLog(models.Model):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+    LEVEL_CHOICES = [
+        (INFO, _("Info")),
+        (WARNING, _("Warning")),
+        (ERROR, _("Error")),
+    ]
+
     message = models.TextField()
+    level = models.CharField(max_length=10, choices=LEVEL_CHOICES, default=INFO)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         ordering = ("-created_at",)
-        indexes = [models.Index(fields=["-created_at"])]
+        indexes = [models.Index(fields=["-created_at"]), models.Index(fields=["level"])]
 
     def __str__(self) -> str:
         ts = timezone.localtime(self.created_at).strftime("%Y-%m-%d %H:%M:%S") if self.created_at else ""
-        return f"[{ts}] {self.message[:200]}"
+        return f"[{ts}] ({self.level.upper()}) {self.message[:200]}"
+
 

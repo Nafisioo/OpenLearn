@@ -7,21 +7,23 @@ from django.db.models import Q
 
 try:
     from PIL import Image
-except Exception:
-    Image=None
+except ImportError:
+    Image = None
+
+
 class CustomUserManager(UserManager):
     def search(self, query=None):
         qs = self.get_queryset()
         if query:
             q = (
                 Q(username__icontains=query)
-                | Q(first_name__icontains=query)   
-                | Q(last_name__icontains=query)    
-                | Q(email__icontains=query)        
+                | Q(first_name__icontains=query)
+                | Q(last_name__icontains=query)
+                | Q(email__icontains=query)
             )
-            qs = qs.filter(q).distinct()           
+            qs = qs.filter(q).distinct()
         return qs
-    
+
 
 class User(AbstractUser):
     class Role(models.TextChoices):
@@ -35,9 +37,9 @@ class User(AbstractUser):
         upload_to="profile_pictures/%y/%m/%d/",
         default="default.png",
         null=True,
-        blank=True)
+        blank=True
+    )
     email = models.EmailField(blank=True, null=True)
-
 
     objects = CustomUserManager()
 
@@ -51,23 +53,19 @@ class User(AbstractUser):
         if self.first_name and self.last_name:
             return f"{self.first_name} {self.last_name}"
         return self.username
-    
+
     def get_picture_url(self):
         try:
             return self.picture.url
         except Exception:
             return settings.MEDIA_URL + "default.png"
-    
+
     def get_absolute_url(self):
         return reverse("accounts:profile", kwargs={"pk": self.pk})
 
     def save(self, *args, **kwargs):
-
         super().save(*args, **kwargs)
-        
-        if Image is None:
-            return
-        if not self.picture:
+        if Image is None or not self.picture:
             return
         try:
             if hasattr(self.picture, "path"):
@@ -78,34 +76,40 @@ class User(AbstractUser):
                     img.save(self.picture.path)
         except Exception:
             pass
-        
+
 
 BACHELOR = _("Bachelor")
 MASTER = _("Master")
 LEVEL_CHOICES = [
     (BACHELOR, _("Bachelor Degree")),
     (MASTER, _("Master Degree"))
-    ]
+]
 
 
 class Student(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="student_profile")
-    level = models.CharField(max_length=25, choices=LEVEL_CHOICES,blank=True, null=True)
-    program = models.ForeignKey("courses.Program", null=True, blank=True, on_delete=models.SET_NULL, related_name="students_profiles")
+    level = models.CharField(max_length=25, choices=LEVEL_CHOICES, blank=True, null=True)
+    program = models.ForeignKey(
+        "courses.Program",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="students_profiles"
+    )
 
     class Meta:
         ordering = ("-user__date_joined",)
 
     def __str__(self):
         return self.user.get_full_name_or_username()
-    
+
     def get_absolute_url(self):
         return reverse("accounts:student_profile", kwargs={"pk": self.pk})
 
-    
+
 class Parent(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="parent_profile")
-    students = models.ManyToManyField(Student, related_name="parents", blank= True)
+    children = models.ManyToManyField(Student, related_name="parents", blank=True)
     phone = models.CharField(max_length=60, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
 
@@ -118,7 +122,13 @@ class Parent(models.Model):
 
 class DepartmentHead(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="dept_head_profile")
-    department = models.ForeignKey("courses.Course", on_delete=models.SET_NULL, null=True, blank=True, related_name="department_heads")
+    program = models.ForeignKey(
+        "courses.Program",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="department_heads"
+    )
 
     def __str__(self):
         return str(self.user)

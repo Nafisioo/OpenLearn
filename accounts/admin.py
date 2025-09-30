@@ -28,8 +28,7 @@ class ParentInline(admin.TabularInline):
     fk_name = "user"
     max_num = 1
     extra = 0
-    filter_horizontal = ("students",)
-    fields = ("phone", "email")
+    fields = ("phone", "email")  
 
 
 class DepartmentHeadInline(admin.TabularInline):
@@ -40,7 +39,7 @@ class DepartmentHeadInline(admin.TabularInline):
     fk_name = "user"
     max_num = 1
     extra = 0
-    fields = ("department",)
+    fields = ()  
 
 
 @admin.register(User)
@@ -58,8 +57,6 @@ class UserAdmin(DjangoUserAdmin):
     list_filter = ("role", "is_staff", "is_superuser", "is_active")
     search_fields = ("username", "first_name", "last_name", "email")
     ordering = ("-date_joined",)
-
-
     readonly_fields = ("last_login", "date_joined")
 
     fieldsets = (
@@ -68,7 +65,6 @@ class UserAdmin(DjangoUserAdmin):
         (_("Permissions"), {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
         (_("Important dates"), {"fields": ("last_login", "date_joined")}),
     )
-
     add_fieldsets = (
         (
             None,
@@ -78,7 +74,6 @@ class UserAdmin(DjangoUserAdmin):
             },
         ),
     )
-
     actions = (
         "make_students",
         "make_instructors",
@@ -91,8 +86,8 @@ class UserAdmin(DjangoUserAdmin):
     def get_inline_instances(self, request, obj=None):
         if not obj:
             return []
-        return super.get_inline_instances(request, obj)
-    
+        return super().get_inline_instances(request, obj)
+
     @admin.action(description="Set selected users role → Student")
     def make_students(self, request, queryset):
         with transaction.atomic():
@@ -101,7 +96,11 @@ class UserAdmin(DjangoUserAdmin):
             users = User.objects.filter(pk__in=queryset.values_list("pk", flat=True))
             for user in users:
                 _, was_created = Student.objects.get_or_create(user=user)
-        self.message_user(request, f"Marked {updated} user(s) as Student. Created {created} Student profile(s).")
+                if was_created:
+                    created += 1
+        self.message_user(
+            request, f"Marked {updated} user(s) as Student. Created {created} Student profile(s)."
+        )
 
     @admin.action(description="Set selected users role → Instructor")
     def make_instructors(self, request, queryset):
@@ -111,10 +110,14 @@ class UserAdmin(DjangoUserAdmin):
     @admin.action(description="Set selected users role → Admin (is_staff=True)")
     def make_admins(self, request, queryset):
         if not request.user.is_superuser:
-            self.message_user(request, "Only superusers can promote users to Admin.", level=messages.ERROR)
+            self.message_user(
+                request, "Only superusers can promote users to Admin.", level=messages.ERROR
+            )
             return
         updated = queryset.update(role=User.Role.ADMIN, is_staff=True)
-        self.message_user(request, f"Marked {updated} user(s) as Admin and set is_staff=True.")
+        self.message_user(
+            request, f"Marked {updated} user(s) as Admin and set is_staff=True."
+        )
 
     @admin.action(description="Enable selected users (is_active=True)")
     def enable_users(self, request, queryset):
@@ -152,20 +155,14 @@ class StudentAdmin(admin.ModelAdmin):
 class ParentAdmin(admin.ModelAdmin):
     list_display = ("user", "phone", "email")
     search_fields = ("user__username", "user__first_name", "user__last_name", "email", "phone")
-    filter_horizontal = ("students",)
     raw_id_fields = ("user",)
     ordering = ("-user__date_joined",)
     list_select_related = ("user",)
 
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        # prefetch students m2m to avoid N+1 when listing or editing parents
-        return qs.prefetch_related("students")
-
 
 @admin.register(DepartmentHead)
 class DepartmentHeadAdmin(admin.ModelAdmin):
-    list_display = ("user", "department")
-    search_fields = ("user__username", "user__first_name", "user__last_name", "department__title")
-    raw_id_fields = ("user", "department")
-    list_select_related = ("user", "department")
+    list_display = ("user",)  
+    search_fields = ("user__username", "user__first_name", "user__last_name")
+    raw_id_fields = ("user",)
+    list_select_related = ("user",)
